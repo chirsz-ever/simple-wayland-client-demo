@@ -21,6 +21,7 @@ executable(
   wl_mod.scan_xml(wl_mod.find_protocol('xdg-shell')),
   wl_mod.scan_xml(wl_mod.find_protocol('cursor-shape', state: 'staging', version: 1)),
   wl_mod.scan_xml(wl_mod.find_protocol('tablet', version: 2)),
+  wl_mod.scan_xml(wl_mod.find_protocol('xdg-decoration', state: 'unstable', version: 1)),
   dependencies : dependencies,
   link_args: '-lm',
 )

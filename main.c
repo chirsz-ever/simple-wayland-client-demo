@@ -10,6 +10,7 @@
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
 #include <wayland-cursor.h>
+#include <xdg-decoration-unstable-v1-client-protocol.h>
 #include <xdg-shell-client-protocol.h>
 
 struct wl_compositor *compositor;
@@ -19,6 +20,7 @@ struct wl_shell *shell;
 struct xdg_wm_base *xdg_wm_base;
 struct wl_pointer *pointer;
 struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
+struct zxdg_decoration_manager_v1 *zxdg_decoration_manager_v1;
 
 void registry_global_handler(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                              uint32_t version) {
@@ -36,6 +38,8 @@ void registry_global_handler(void *data, struct wl_registry *registry, uint32_t 
         seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
     } else if (strcmp(interface, wp_cursor_shape_manager_v1_interface.name) == 0) {
         wp_cursor_shape_manager_v1 = wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
+    } else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
+        zxdg_decoration_manager_v1 = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
     } else {
         // printf("Unknown global: %s\n", interface);
     }
@@ -238,6 +242,11 @@ int main(void) {
         xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener, NULL);
         // signal that the surface is ready to be configured
         wl_surface_commit(surface);
+        if (zxdg_decoration_manager_v1) {
+            struct zxdg_toplevel_decoration_v1 *decoration =
+                zxdg_decoration_manager_v1_get_toplevel_decoration(zxdg_decoration_manager_v1, xdg_toplevel);
+            zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+        }
     } else if (shell) {
         struct wl_shell_surface *shell_surface = wl_shell_get_shell_surface(shell, surface);
         wl_shell_surface_set_toplevel(shell_surface);
