@@ -1,15 +1,15 @@
 #define _DEFAULT_SOURCE
 
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
+#include <cursor-shape-v1-client-protocol.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <wayland-client.h>
 #include <wayland-cursor.h>
-#include <wayland-protocols/xdg-shell-enum.h>
 #include <xdg-shell-client-protocol.h>
 
 struct wl_compositor *compositor;
@@ -18,6 +18,7 @@ struct wl_seat *seat;
 struct wl_shell *shell;
 struct xdg_wm_base *xdg_wm_base;
 struct wl_pointer *pointer;
+struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
 
 void registry_global_handler(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                              uint32_t version) {
@@ -33,6 +34,8 @@ void registry_global_handler(void *data, struct wl_registry *registry, uint32_t 
         xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
         seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+    } else if (strcmp(interface, wp_cursor_shape_manager_v1_interface.name) == 0) {
+        wp_cursor_shape_manager_v1 = wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
     } else {
         // printf("Unknown global: %s\n", interface);
     }
@@ -92,7 +95,11 @@ void pointer_enter_handler(void *data, struct wl_pointer *pointer, uint32_t seri
     (void)surface;
     (void)x;
     (void)y;
-    if (cursor_surface) {
+    if (wp_cursor_shape_manager_v1) {
+        struct wp_cursor_shape_device_v1 *device =
+            wp_cursor_shape_manager_v1_get_pointer(wp_cursor_shape_manager_v1, pointer);
+        wp_cursor_shape_device_v1_set_shape(device, serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
+    } else if (cursor_surface) {
         wl_pointer_set_cursor(pointer, serial, cursor_surface, cursor_image->hotspot_x, cursor_image->hotspot_y);
     }
 }
@@ -228,14 +235,17 @@ int main(void) {
     if (pointer) {
         wl_pointer_add_listener(pointer, &pointer_listener, NULL);
 
-        struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(NULL, 24, shm);
-        struct wl_cursor *cursor             = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
-        cursor_image                         = cursor->images[0];
-        struct wl_buffer *cursor_buffer      = wl_cursor_image_get_buffer(cursor_image);
+        if (!wp_cursor_shape_manager_v1) {
+            // Fallback to using a cursor theme
+            struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(NULL, 24, shm);
+            struct wl_cursor *cursor             = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+            cursor_image                         = cursor->images[0];
+            struct wl_buffer *cursor_buffer      = wl_cursor_image_get_buffer(cursor_image);
 
-        cursor_surface = wl_compositor_create_surface(compositor);
-        wl_surface_attach(cursor_surface, cursor_buffer, 0, 0);
-        wl_surface_commit(cursor_surface);
+            cursor_surface = wl_compositor_create_surface(compositor);
+            wl_surface_attach(cursor_surface, cursor_buffer, 0, 0);
+            wl_surface_commit(cursor_surface);
+        }
     }
 
     if (xdg_wm_base) {

@@ -7,8 +7,6 @@ project(
 )
 
 wl_mod = import('wayland')
-xdg_shell_xml = wl_mod.find_protocol('xdg-shell')
-xdg_shell = wl_mod.scan_xml(xdg_shell_xml)
 
 dependencies = [
   dependency('wayland-client'),
@@ -18,6 +16,8 @@ dependencies = [
 executable(
   'demo',
   'main.c',
-  xdg_shell,
+  wl_mod.scan_xml(wl_mod.find_protocol('xdg-shell')),
+  wl_mod.scan_xml(wl_mod.find_protocol('cursor-shape', state: 'staging', version: 1)),
+  wl_mod.scan_xml(wl_mod.find_protocol('tablet', version: 2)),
   dependencies : dependencies,
 )
