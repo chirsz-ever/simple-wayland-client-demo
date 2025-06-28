@@ -12,6 +12,7 @@ xdg_shell = wl_mod.scan_xml(xdg_shell_xml)
 
 dependencies = [
   dependency('wayland-client'),
+  dependency('wayland-cursor'),
 ]
 
 executable(

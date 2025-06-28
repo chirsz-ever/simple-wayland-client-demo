@@ -6,15 +6,17 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <unistd.h>
-#include <wayland-client-protocol.h>
 #include <wayland-client.h>
+#include <wayland-cursor.h>
 #include <wayland-protocols/xdg-shell-enum.h>
 #include <xdg-shell-client-protocol.h>
 
 struct wl_compositor *compositor;
 struct wl_shm *shm;
+struct wl_seat *seat;
 struct wl_shell *shell;
 struct xdg_wm_base *xdg_wm_base;
+struct wl_pointer *pointer;
 
 void registry_global_handler(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                              uint32_t version) {
@@ -28,6 +30,10 @@ void registry_global_handler(void *data, struct wl_registry *registry, uint32_t 
         shell = wl_registry_bind(registry, name, &wl_shell_interface, 1);
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
+    } else if (strcmp(interface, wl_seat_interface.name) == 0) {
+        seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+    } else {
+        // printf("Unknown global: %s\n", interface);
     }
 }
 
@@ -43,7 +49,9 @@ void xdg_toplevel_configure_handler(void *data, struct xdg_toplevel *xdg_topleve
     (void)data;
     (void)xdg_toplevel;
     (void)states;
-    printf("configure: %dx%d\n", width, height);
+    (void)width;
+    (void)height;
+    // printf("configure: %dx%d\n", width, height);
 }
 
 void xdg_toplevel_close_handler(void *data, struct xdg_toplevel *xdg_toplevel) {
@@ -68,10 +76,63 @@ const struct wl_registry_listener registry_listener = {.global        = registry
 void xdg_wm_base_handler(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
     (void)data;
     xdg_wm_base_pong(xdg_wm_base, serial);
-    printf("ping-pong\n");
+    // printf("ping-pong\n");
 }
 
 const struct xdg_wm_base_listener xdg_wm_base_listener = {.ping = xdg_wm_base_handler};
+
+struct wl_surface *cursor_surface;
+struct wl_cursor_image *cursor_image;
+
+void pointer_enter_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface,
+                           wl_fixed_t x, wl_fixed_t y) {
+    (void)data;
+    (void)surface;
+    (void)x;
+    (void)y;
+    if (cursor_surface) {
+        wl_pointer_set_cursor(pointer, serial, cursor_surface, cursor_image->hotspot_x, cursor_image->hotspot_y);
+    }
+}
+
+void pointer_leave_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface) {
+    (void)data;
+    (void)pointer;
+    (void)serial;
+    (void)surface;
+}
+
+void pointer_motion_handler(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
+    (void)data;
+    (void)pointer;
+    (void)time;
+    (void)x;
+    (void)y;
+}
+
+void pointer_button_handler(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button,
+                            uint32_t state) {
+    (void)data;
+    (void)pointer;
+    (void)serial;
+    (void)time;
+    (void)button;
+    (void)state;
+}
+
+void pointer_axis_handler(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {
+    (void)data;
+    (void)pointer;
+    (void)time;
+    (void)axis;
+    (void)value;
+}
+
+const struct wl_pointer_listener pointer_listener = {.enter  = pointer_enter_handler,
+                                                     .leave  = pointer_leave_handler,
+                                                     .motion = pointer_motion_handler,
+                                                     .button = pointer_button_handler,
+                                                     .axis   = pointer_axis_handler};
 
 void draw(unsigned char *data, int width, int height, int stride) {
     // fill the buffer with a red square
@@ -112,10 +173,12 @@ int main(void) {
     wl_display_roundtrip(display);
 
     // all our objects should be ready!
-    if (compositor && shm) {
-        printf("Got all!\n");
-    } else {
-        printf("Some required globals unavailable: compositor=%p, shm=%p\n", (void *)compositor, (void *)shm);
+    if (!compositor) {
+        fprintf(stderr, "wl_compositor not available\n");
+        return 1;
+    }
+    if (!shm) {
+        fprintf(stderr, "wl_shm not available\n");
         return 1;
     }
 
@@ -158,6 +221,20 @@ int main(void) {
 
     wl_surface_attach(surface, buffer, 0, 0);
     wl_surface_commit(surface);
+
+    pointer = wl_seat_get_pointer(seat);
+    if (pointer) {
+        wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+
+        struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(NULL, 24, shm);
+        struct wl_cursor *cursor             = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
+        cursor_image                         = cursor->images[0];
+        struct wl_buffer *cursor_buffer      = wl_cursor_image_get_buffer(cursor_image);
+
+        cursor_surface = wl_compositor_create_surface(compositor);
+        wl_surface_attach(cursor_surface, cursor_buffer, 0, 0);
+        wl_surface_commit(cursor_surface);
+    }
 
     if (xdg_wm_base) {
         wl_display_roundtrip(display);
