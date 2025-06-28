@@ -1,9 +1,9 @@
 project(
   'wayland-client-demo',
-  'cpp',
+  'c',
   version : '0.1',
   meson_version : '>= 1.3.0',
-  default_options : ['warning_level=3', 'cpp_std=c++20'],
+  default_options : ['warning_level=3', 'c_std=c99'],
 )
 
 dependencies = [
@@ -12,7 +12,7 @@ dependencies = [
 
 exe = executable(
   'demo',
-  'main.cpp',
+  'main.c',
   install : true,
   dependencies : dependencies,
 )
