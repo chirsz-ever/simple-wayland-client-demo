@@ -1,5 +1,3 @@
-#define _DEFAULT_SOURCE
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +5,9 @@
 #include <cursor-shape-v1-client-protocol.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
+#include <wayland-client-protocol.h>
 #include <wayland-client.h>
 #include <wayland-cursor.h>
 #include <xdg-shell-client-protocol.h>
@@ -144,6 +144,9 @@ const struct wl_pointer_listener pointer_listener = {.enter  = pointer_enter_han
                                                      .axis   = pointer_axis_handler};
 
 void draw(unsigned char *data, int width, int height, int stride) {
+    int64_t t = clock() / (CLOCKS_PER_SEC / 1000);
+    // printf("t=%ld\n", t);
+
     // fill the buffer with a red square
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
@@ -153,10 +156,10 @@ void draw(unsigned char *data, int width, int height, int stride) {
                 unsigned char r;
                 unsigned char a;
             } *px = (void *)(data + y * stride + x * 4);
-            if ((x + y) % 30 < 10) {
+            if ((x + y + t) % 30 < 10) {
                 // transparent
                 px->a = 0;
-            } else if ((x + y) % 30 < 20) {
+            } else if ((x + y + t) % 30 < 20) {
                 // yellow
                 px->a = 255;
                 px->r = 255;
@@ -171,6 +174,40 @@ void draw(unsigned char *data, int width, int height, int stride) {
             }
         }
     }
+}
+
+unsigned char *data;
+const int width  = 200;
+const int height = 200;
+const int stride = width * 4;
+const int size   = stride * height; // bytes
+
+struct wl_surface *surface;
+struct wl_buffer *buffer;
+
+void surface_request_frame(void);
+
+void callback_done_handler(void *data_, struct wl_callback *callback, uint32_t time) {
+    (void)data_;
+    (void)time;
+    // printf("done!\n");
+    if (callback) {
+        wl_callback_destroy(callback);
+    }
+    surface_request_frame();
+    draw(data, width, height, stride);
+    wl_surface_attach(surface, buffer, 0, 0);
+    wl_surface_damage(surface, 0, 0, width, height);
+    wl_surface_commit(surface);
+}
+
+const struct wl_callback_listener callback_listener = {
+    .done = callback_done_handler,
+};
+
+void surface_request_frame(void) {
+    struct wl_callback *callback = wl_surface_frame(surface);
+    wl_callback_add_listener(callback, &callback_listener, NULL);
 }
 
 int main(void) {
@@ -191,7 +228,7 @@ int main(void) {
         return 1;
     }
 
-    struct wl_surface *surface = wl_compositor_create_surface(compositor);
+    surface = wl_compositor_create_surface(compositor);
     if (xdg_wm_base) {
         struct xdg_surface *xdg_surface   = xdg_wm_base_get_xdg_surface(xdg_wm_base, surface);
         struct xdg_toplevel *xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
@@ -209,27 +246,22 @@ int main(void) {
         return 1;
     }
 
-    int width  = 200;
-    int height = 200;
-    int stride = width * 4;
-    int size   = stride * height; // bytes
     // open an anonymous file and write some zero bytes to it
-    int fd     = syscall(SYS_memfd_create, "buffer", 0);
+    int fd = syscall(SYS_memfd_create, "buffer", 0);
     ftruncate(fd, size);
 
     // map it to the memory
-    unsigned char *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    draw(data, width, height, stride);
+    data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
 
     // allocate the buffer in that pool
-    struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+    buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
 
     wl_display_roundtrip(display);
 
-    wl_surface_attach(surface, buffer, 0, 0);
-    wl_surface_commit(surface);
+    surface_request_frame();
+    callback_done_handler(NULL, NULL, 0);
 
     pointer = wl_seat_get_pointer(seat);
     if (pointer) {

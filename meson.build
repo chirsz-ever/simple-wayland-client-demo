@@ -6,6 +6,8 @@ project(
   default_options : ['warning_level=3', 'c_std=c99'],
 )
 
+add_project_arguments('-D_DEFAULT_SOURCE', language : 'c')
+
 wl_mod = import('wayland')
 
 dependencies = [
@@ -20,4 +22,5 @@ executable(
   wl_mod.scan_xml(wl_mod.find_protocol('cursor-shape', state: 'staging', version: 1)),
   wl_mod.scan_xml(wl_mod.find_protocol('tablet', version: 2)),
   dependencies : dependencies,
+  link_args: '-lm',
 )
