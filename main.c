@@ -2,6 +2,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include <sys/mman.h>
 #include <sys/syscall.h>
@@ -57,7 +58,8 @@ void xdg_toplevel_configure_handler(void *data, struct xdg_toplevel *xdg_topleve
 void xdg_toplevel_close_handler(void *data, struct xdg_toplevel *xdg_toplevel) {
     (void)data;
     (void)xdg_toplevel;
-    printf("close\n");
+    // printf("close\n");
+    exit(0);
 }
 
 const struct xdg_toplevel_listener xdg_toplevel_listener = {.configure = xdg_toplevel_configure_handler,
