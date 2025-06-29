@@ -18,7 +18,6 @@
 struct wl_compositor *compositor;
 struct wl_shm *shm;
 struct wl_seat *seat;
-struct wl_shell *shell;
 struct xdg_wm_base *xdg_wm_base;
 struct wl_pointer *pointer;
 struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
@@ -32,8 +31,6 @@ void registry_global_handler(void *data, struct wl_registry *registry, uint32_t 
         compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 3);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
         shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
-    } else if (strcmp(interface, wl_shell_interface.name) == 0) {
-        shell = wl_registry_bind(registry, name, &wl_shell_interface, 1);
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
         xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
@@ -237,12 +234,13 @@ int main(void) {
     if (xdg_wm_base) {
         wl_display_roundtrip(display);
         xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, NULL);
-    } else if (shell) {
-        // TODO
+    } else {
+        fprintf(stderr, "xdg_wm_base not available\n");
+        return 1;
     }
 
     surface = wl_compositor_create_surface(compositor);
-    if (xdg_wm_base) {
+    {
         struct xdg_surface *xdg_surface   = xdg_wm_base_get_xdg_surface(xdg_wm_base, surface);
         struct xdg_toplevel *xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
         xdg_surface_add_listener(xdg_surface, &xdg_surface_listener, NULL);
@@ -256,12 +254,6 @@ int main(void) {
                 zxdg_decoration_manager_v1_get_toplevel_decoration(zxdg_decoration_manager_v1, xdg_toplevel);
             zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
         }
-    } else if (shell) {
-        struct wl_shell_surface *shell_surface = wl_shell_get_shell_surface(shell, surface);
-        wl_shell_surface_set_toplevel(shell_surface);
-    } else {
-        fprintf(stderr, "No wl_shell or xdg_wm_base available\n");
-        return 1;
     }
 
     // open an anonymous file and write some zero bytes to it
