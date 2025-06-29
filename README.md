@@ -9,4 +9,5 @@ Used protocols:
 ## Reference
 
 <https://bugaevc.gitbooks.io/writing-wayland-clients>
+
 <https://wayland-book.com/xdg-shell-basics/example-code.html>
