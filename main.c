@@ -183,8 +183,8 @@ void draw(unsigned char *data, int width, int height, int stride) {
 }
 
 unsigned char *data;
-const int width  = 200;
-const int height = 200;
+const int width  = 400;
+const int height = 400;
 const int stride = width * 4;
 const int size   = stride * height; // bytes
 
@@ -232,6 +232,13 @@ int main(void) {
     if (!shm) {
         fprintf(stderr, "wl_shm not available\n");
         return 1;
+    }
+
+    if (xdg_wm_base) {
+        wl_display_roundtrip(display);
+        xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, NULL);
+    } else if (shell) {
+        // TODO
     }
 
     surface = wl_compositor_create_surface(compositor);
@@ -289,13 +296,6 @@ int main(void) {
             wl_surface_attach(cursor_surface, cursor_buffer, 0, 0);
             wl_surface_commit(cursor_surface);
         }
-    }
-
-    if (xdg_wm_base) {
-        wl_display_roundtrip(display);
-        xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, NULL);
-    } else if (shell) {
-        // TODO
     }
 
     while (1) {
