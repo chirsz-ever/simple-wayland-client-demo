@@ -169,8 +169,9 @@ struct rect_t {
     float height;
 };
 
-static const struct rect_t close_button_area = {width - 20, 0.0f, 20, 20};
-static const struct rect_t title_bar_area    = {0.0f, 0.0f, width, 20};
+static const struct rect_t minimal_button_area = {width - 45, 0.0f, 20, 20};
+static const struct rect_t close_button_area   = {width - 20, 0.0f, 20, 20};
+static const struct rect_t title_bar_area      = {0.0f, 0.0f, width, 20};
 
 static int in_rect(const struct rect_t *rect, float x, float y) {
     return (rect->x <= x && x < rect->x + rect->width && rect->y <= y && y < rect->y + rect->height);
@@ -189,14 +190,15 @@ static void pointer_button_handler(void *data, struct wl_pointer *pointer, uint3
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
         // printf("Left button pressed\n");
         if (!client->use_server_side_decoration) {
-            if (in_rect(&close_button_area, pointer_pos_x, pointer_pos_y)) {
+            if (in_rect(&minimal_button_area, pointer_pos_x, pointer_pos_y)) {
+                // printf("minimize window\n");
+                xdg_toplevel_set_minimized(client->xdg_toplevel);
+            } else if (in_rect(&close_button_area, pointer_pos_x, pointer_pos_y)) {
                 // printf("click x\n");
                 client->should_close = 1;
-                return;
             } else if (in_rect(&title_bar_area, pointer_pos_x, pointer_pos_y)) {
                 // printf("move window\n");
                 xdg_toplevel_move(client->xdg_toplevel, client->seat, serial);
-                return;
             }
         }
     }
@@ -241,28 +243,72 @@ static void draw_rect(unsigned char *data, int width, int height, int stride, co
     }
 }
 
-static void draw_decoration(unsigned char *data, int width, int height, int stride) {
-    // gray title bar and red close button
-    draw_rect(data, width, height, stride, &title_bar_area, &(struct pixel_t){.a = 255, .r = 120, .g = 120, .b = 120});
-    draw_rect(data, width, height, stride, &close_button_area, &(struct pixel_t){.a = 255, .r = 255, .g = 0, .b = 0});
-    // draw a white cross on the close button
+static void draw_close_button(unsigned char *data, int width, int height, int stride) {
+    // draw red square and white cross
     int w     = (int)close_button_area.width;
     int pad   = 2;
     int x_top = w - pad;
     int y_top = x_top;
     for (int y = 0; y < close_button_area.height; y++) {
         for (int x = 0; x < close_button_area.width; x++) {
-            struct pixel_t *px =
-                (struct pixel_t *)(data + (y + (int)close_button_area.y) * stride + (x + (int)close_button_area.x) * 4);
+            int x_ = x + (int)close_button_area.x;
+            int y_ = y + (int)close_button_area.y;
+            if (x_ < 0 || y_ < 0 || x_ >= width || y_ >= height) {
+                continue; // skip out of bounds
+            }
+            struct pixel_t *px = (struct pixel_t *)(data + y_ * stride + x_ * 4);
             if (pad < x && x < x_top && pad < y && y < y_top && (x == y || x + y == w)) {
                 // white
                 px->a = 255;
                 px->r = 255;
                 px->g = 255;
                 px->b = 255;
+            } else {
+                // red
+                px->a = 255;
+                px->r = 255;
+                px->g = 0;
+                px->b = 0;
             }
         }
     }
+}
+
+static void draw_minimal_button(unsigned char *data, int width, int height, int stride) {
+    // draw white minus
+    int w     = (int)minimal_button_area.width;
+    int pad   = 2;
+    int x_top = w - pad;
+    for (int y = 0; y < minimal_button_area.height; y++) {
+        for (int x = 0; x < minimal_button_area.width; x++) {
+            int x_ = x + (int)minimal_button_area.x;
+            int y_ = y + (int)minimal_button_area.y;
+            if (x_ < 0 || y_ < 0 || x_ >= width || y_ >= height) {
+                continue; // skip out of bounds
+            }
+            struct pixel_t *px = (struct pixel_t *)(data + y_ * stride + x_ * 4);
+            if (pad < x && x < x_top && y == w * 2 / 3) {
+                // white
+                px->a = 255;
+                px->r = 255;
+                px->g = 255;
+                px->b = 255;
+            } else {
+
+                px->a = 255;
+                px->r = 120;
+                px->g = 120;
+                px->b = 120;
+            }
+        }
+    }
+}
+
+static void draw_decoration(unsigned char *data, int width, int height, int stride) {
+    // draw gray title bar
+    draw_rect(data, width, height, stride, &title_bar_area, &(struct pixel_t){.a = 255, .r = 70, .g = 70, .b = 120});
+    draw_close_button(data, width, height, stride);
+    draw_minimal_button(data, width, height, stride);
 }
 
 static void draw(struct SimpleClient *client, int width, int height, int stride) {
@@ -337,7 +383,7 @@ static int args_match(int argc, char *argv[], const char *arg) {
 }
 
 int main(int argc, char *argv[]) {
-    struct SimpleClient *client  = calloc(1, sizeof(struct SimpleClient));
+    struct SimpleClient *client = calloc(1, sizeof(struct SimpleClient));
     if (!client) {
         fprintf(stderr, "Failed to allocate memory for SimpleClient\n");
         return 1;
