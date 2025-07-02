@@ -5,8 +5,8 @@
 #include <string.h>
 #include <time.h>
 
-#include <sys/mman.h>
 #include <fcntl.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -26,6 +26,7 @@ struct xdg_wm_base *xdg_wm_base;
 struct wl_pointer *pointer;
 struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
 struct zxdg_decoration_manager_v1 *zxdg_decoration_manager_v1;
+static int use_server_side_decoration = 0;
 
 void registry_global_handler(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
                              uint32_t version) {
@@ -43,6 +44,7 @@ void registry_global_handler(void *data, struct wl_registry *registry, uint32_t 
         wp_cursor_shape_manager_v1 = wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
     } else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
         zxdg_decoration_manager_v1 = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
+        use_server_side_decoration = 1;
     } else {
         // printf("Unknown global: %s\n", interface);
     }
@@ -112,11 +114,17 @@ void pointer_enter_handler(void *data, struct wl_pointer *pointer, uint32_t seri
     }
 }
 
+static float pointer_pos_x = 0.0f;
+static float pointer_pos_y = 0.0f;
+
 void pointer_leave_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface) {
     (void)data;
     (void)pointer;
     (void)serial;
     (void)surface;
+
+    pointer_pos_x = -1.0f;
+    pointer_pos_y = -1.0f;
 }
 
 void pointer_motion_handler(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
@@ -125,7 +133,33 @@ void pointer_motion_handler(void *data, struct wl_pointer *pointer, uint32_t tim
     (void)time;
     (void)x;
     (void)y;
+
+    pointer_pos_x = wl_fixed_to_double(x);
+    pointer_pos_y = wl_fixed_to_double(y);
 }
+
+#ifndef BTN_LEFT
+#define BTN_LEFT 0x110
+#endif
+
+const int width  = 400;
+const int height = 400;
+
+struct rect_t {
+    float x;
+    float y;
+    float width;
+    float height;
+};
+
+struct rect_t close_button_area = {width - 20, 0.0f, 20, 20};
+struct rect_t title_bar_area    = {0.0f, 0.0f, width, 20};
+
+static int in_rect(const struct rect_t *rect, float x, float y) {
+    return (rect->x <= x && x < rect->x + rect->width && rect->y <= y && y < rect->y + rect->height);
+}
+
+struct xdg_toplevel *xdg_toplevel;
 
 void pointer_button_handler(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button,
                             uint32_t state) {
@@ -135,6 +169,21 @@ void pointer_button_handler(void *data, struct wl_pointer *pointer, uint32_t ser
     (void)time;
     (void)button;
     (void)state;
+
+    if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
+        // printf("Left button pressed\n");
+        if (!use_server_side_decoration) {
+            if (in_rect(&close_button_area, pointer_pos_x, pointer_pos_y)) {
+                // printf("click x\n");
+                exit(1);
+                return;
+            } else if (in_rect(&title_bar_area, pointer_pos_x, pointer_pos_y)) {
+                // printf("move window\n");
+                xdg_toplevel_move(xdg_toplevel, seat, serial);
+                return;
+            }
+        }
+    }
 }
 
 void pointer_axis_handler(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {
@@ -145,25 +194,69 @@ void pointer_axis_handler(void *data, struct wl_pointer *pointer, uint32_t time,
     (void)value;
 }
 
-const struct wl_pointer_listener pointer_listener = {.enter  = pointer_enter_handler,
-                                                     .leave  = pointer_leave_handler,
-                                                     .motion = pointer_motion_handler,
-                                                     .button = pointer_button_handler,
-                                                     .axis   = pointer_axis_handler};
+const struct wl_pointer_listener pointer_listener = {
+    .enter  = pointer_enter_handler,
+    .leave  = pointer_leave_handler,
+    .motion = pointer_motion_handler,
+    .button = pointer_button_handler,
+    .axis   = pointer_axis_handler,
+};
 
-void draw(unsigned char *data, int width, int height, int stride) {
+struct pixel_t {
+    unsigned char b;
+    unsigned char g;
+    unsigned char r;
+    unsigned char a;
+};
+
+static void draw_rect(unsigned char *data, int width, int height, int stride, const struct rect_t *rect,
+                      const struct pixel_t *color) {
+    for (int y = rect->y; y < rect->y + rect->height && y < height; y++) {
+        for (int x = rect->x; x < rect->x + rect->width && x < width; x++) {
+            struct pixel_t *px = (struct pixel_t *)(data + y * stride + x * 4);
+            if (x >= 0 && y >= 0 && x < width && y < height) {
+                px->a = color->a;
+                px->r = color->r;
+                px->g = color->g;
+                px->b = color->b;
+            }
+        }
+    }
+}
+
+static void draw_decoration(unsigned char *data, int width, int height, int stride) {
+    // gray title bar and red close button
+    draw_rect(data, width, height, stride, &title_bar_area,
+              &(struct pixel_t){.a = 255, .r = 120, .g = 120, .b = 120}); 
+    draw_rect(data, width, height, stride, &close_button_area,
+              &(struct pixel_t){.a = 255, .r = 255, .g = 0, .b = 0});
+    // draw a white cross on the close button
+    int w = (int)close_button_area.width;
+    int pad = 2;
+    int x_top = w - pad;
+    int y_top = x_top;
+    for (int y = 0; y < close_button_area.height; y++) {
+        for (int x = 0; x < close_button_area.width; x++) {
+            struct pixel_t *px = (struct pixel_t *)(data + (y + (int)close_button_area.y) * stride + (x + (int)close_button_area.x) * 4);
+            if (pad < x && x < x_top && pad < y && y < y_top && (x == y || x + y == w)) {
+                // white
+                px->a = 255;
+                px->r = 255;
+                px->g = 255;
+                px->b = 255;
+            }
+        }
+    }
+}
+
+static void draw(unsigned char *data, int width, int height, int stride) {
     int64_t t = clock() / (CLOCKS_PER_SEC / 1000);
     // printf("t=%ld\n", t);
 
     // fill the buffer with a red square
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
-            struct {
-                unsigned char b;
-                unsigned char g;
-                unsigned char r;
-                unsigned char a;
-            } *px = (void *)(data + y * stride + x * 4);
+            struct pixel_t *px = (struct pixel_t *)(data + y * stride + x * 4);
             if ((x + y + t) % 30 < 10) {
                 // transparent
                 px->a = 0;
@@ -182,11 +275,13 @@ void draw(unsigned char *data, int width, int height, int stride) {
             }
         }
     }
+
+    if (!use_server_side_decoration) {
+        draw_decoration(data, width, height, stride);
+    }
 }
 
 unsigned char *data;
-const int width  = 400;
-const int height = 400;
 const int stride = width * 4;
 const int size   = stride * height; // bytes
 
@@ -246,15 +341,15 @@ int main(void) {
 
     surface = wl_compositor_create_surface(compositor);
     {
-        struct xdg_surface *xdg_surface   = xdg_wm_base_get_xdg_surface(xdg_wm_base, surface);
-        struct xdg_toplevel *xdg_toplevel = xdg_surface_get_toplevel(xdg_surface);
+        struct xdg_surface *xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, surface);
+        xdg_toplevel                    = xdg_surface_get_toplevel(xdg_surface);
         xdg_surface_add_listener(xdg_surface, &xdg_surface_listener, NULL);
         xdg_toplevel_set_title(xdg_toplevel, "Hello Wayland");
         xdg_toplevel_set_app_id(xdg_toplevel, "com.example.hellowayland");
         xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener, NULL);
         // signal that the surface is ready to be configured
         wl_surface_commit(surface);
-        if (zxdg_decoration_manager_v1) {
+        if (use_server_side_decoration && zxdg_decoration_manager_v1) {
             struct zxdg_toplevel_decoration_v1 *decoration =
                 zxdg_decoration_manager_v1_get_toplevel_decoration(zxdg_decoration_manager_v1, xdg_toplevel);
             zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
