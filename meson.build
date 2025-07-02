@@ -8,7 +8,7 @@ project(
 
 compiler = meson.get_compiler('c')
 if compiler.has_function('memfd_create', prefix : '#define _GNU_SOURCE\n#include <sys/mman.h>')
-  add_project_arguments('-DHAS_MEMFD', language : 'c')
+  add_project_arguments(['-DHAS_MEMFD', '-D_GNU_SOURCE'], language : 'c')
 endif
 
 add_project_arguments('-D_DEFAULT_SOURCE', language : 'c')
