@@ -6,6 +6,8 @@
 #include <time.h>
 
 #include <sys/mman.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -44,6 +46,7 @@ void registry_global_handler(void *data, struct wl_registry *registry, uint32_t 
     } else {
         // printf("Unknown global: %s\n", interface);
     }
+    // printf("interface: %s, name: %d, version: %d\n", interface, name, version);
 }
 
 void registry_global_remove_handler(void *data, struct wl_registry *registry, uint32_t name) {
@@ -259,11 +262,34 @@ int main(void) {
     }
 
     // open an anonymous file and write some zero bytes to it
-    int fd = syscall(SYS_memfd_create, "buffer", 0);
-    ftruncate(fd, size);
+    int fd;
+#ifdef HAS_MEMFD
+    fd = memfd_create("buffer", 0);
+#else
+#define SHMID "/wl_buffer"
+    fd = shm_open(SHMID, O_RDWR | O_CREAT, 0600);
+    if (fd >= 0) {
+        if (shm_unlink(SHMID) < 0) {
+            perror("shm_unlink failed");
+            return 1;
+        }
+    } else {
+        perror("shm_open failed");
+        return 1;
+    }
+#endif
+
+    if (ftruncate(fd, size) < 0) {
+        perror("ftruncate failed");
+        return 1;
+    }
 
     // map it to the memory
     data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (data == MAP_FAILED) {
+        perror("mmap failed");
+        return 1;
+    }
 
     struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
 

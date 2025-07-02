@@ -6,6 +6,11 @@ project(
   default_options : ['warning_level=3', 'c_std=c99'],
 )
 
+compiler = meson.get_compiler('c')
+if compiler.has_function('memfd_create', prefix : '#define _GNU_SOURCE\n#include <sys/mman.h>')
+  add_project_arguments('-DHAS_MEMFD', language : 'c')
+endif
+
 add_project_arguments('-D_DEFAULT_SOURCE', language : 'c')
 
 wl_mod = import('wayland')
