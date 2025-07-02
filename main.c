@@ -19,47 +19,60 @@
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "xdg-shell-client-protocol.h"
 
-struct wl_compositor *compositor;
-struct wl_shm *shm;
-struct wl_seat *seat;
-struct xdg_wm_base *xdg_wm_base;
-struct wl_pointer *pointer;
-struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
-struct zxdg_decoration_manager_v1 *zxdg_decoration_manager_v1;
-static int use_server_side_decoration = 0;
+struct SimpleClient {
+    struct wl_compositor *compositor;
+    struct wl_shm *shm;
+    struct wl_seat *seat;
+    struct xdg_wm_base *xdg_wm_base;
+    struct wp_cursor_shape_manager_v1 *wp_cursor_shape_manager_v1;
+    struct zxdg_decoration_manager_v1 *zxdg_decoration_manager_v1;
+    struct wl_surface *cursor_surface;
+    struct wl_cursor_image *cursor_image;
+    struct wl_surface *surface;
+    struct wl_buffer *buffer;
+    struct xdg_toplevel *xdg_toplevel;
+    struct xdg_surface *xdg_surface;
+    struct wl_shm_pool *shm_pool;
 
-void registry_global_handler(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
-                             uint32_t version) {
-    (void)data;
+    unsigned char *shm_data;
+
+    float pointer_pos_x;
+    float pointer_pos_y;
+    int use_server_side_decoration;
+    int should_close;
+};
+
+static void registry_global_handler(void *data, struct wl_registry *registry, uint32_t name, const char *interface,
+                                    uint32_t version) {
     (void)version;
+    struct SimpleClient *client = data;
     if (strcmp(interface, wl_compositor_interface.name) == 0) {
-        compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 3);
+        client->compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 3);
     } else if (strcmp(interface, wl_shm_interface.name) == 0) {
-        shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+        client->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
     } else if (strcmp(interface, xdg_wm_base_interface.name) == 0) {
-        xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
+        client->xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
     } else if (strcmp(interface, wl_seat_interface.name) == 0) {
-        seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
+        client->seat = wl_registry_bind(registry, name, &wl_seat_interface, 1);
     } else if (strcmp(interface, wp_cursor_shape_manager_v1_interface.name) == 0) {
-        wp_cursor_shape_manager_v1 = wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
+        client->wp_cursor_shape_manager_v1 = wl_registry_bind(registry, name, &wp_cursor_shape_manager_v1_interface, 1);
     } else if (strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
-        zxdg_decoration_manager_v1 = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
-        use_server_side_decoration = 1;
+        client->zxdg_decoration_manager_v1 = wl_registry_bind(registry, name, &zxdg_decoration_manager_v1_interface, 1);
     } else {
         // printf("Unknown global: %s\n", interface);
     }
     // printf("interface: %s, name: %d, version: %d\n", interface, name, version);
 }
 
-void registry_global_remove_handler(void *data, struct wl_registry *registry, uint32_t name) {
+static void registry_global_remove_handler(void *data, struct wl_registry *registry, uint32_t name) {
     (void)data;
     (void)registry;
     (void)name;
     // printf("removed: %u\n", name);
 }
 
-void xdg_toplevel_configure_handler(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height,
-                                    struct wl_array *states) {
+static void xdg_toplevel_configure_handler(void *data, struct xdg_toplevel *xdg_toplevel, int32_t width, int32_t height,
+                                           struct wl_array *states) {
     (void)data;
     (void)xdg_toplevel;
     (void)states;
@@ -68,74 +81,78 @@ void xdg_toplevel_configure_handler(void *data, struct xdg_toplevel *xdg_topleve
     // printf("configure: %dx%d\n", width, height);
 }
 
-void xdg_toplevel_close_handler(void *data, struct xdg_toplevel *xdg_toplevel) {
+static void xdg_toplevel_close_handler(void *data, struct xdg_toplevel *xdg_toplevel) {
     (void)data;
     (void)xdg_toplevel;
     // printf("close\n");
-    exit(0);
+
+    struct SimpleClient *client = data;
+    client->should_close        = 1;
 }
 
-const struct xdg_toplevel_listener xdg_toplevel_listener = {.configure = xdg_toplevel_configure_handler,
-                                                            .close     = xdg_toplevel_close_handler};
+static const struct xdg_toplevel_listener xdg_toplevel_listener = {
+    .configure = xdg_toplevel_configure_handler,
+    .close     = xdg_toplevel_close_handler,
+};
 
-void xdg_surface_configure_handler(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
+static void xdg_surface_configure_handler(void *data, struct xdg_surface *xdg_surface, uint32_t serial) {
     (void)data;
     xdg_surface_ack_configure(xdg_surface, serial);
 }
 
-const struct xdg_surface_listener xdg_surface_listener = {.configure = xdg_surface_configure_handler};
+static const struct xdg_surface_listener xdg_surface_listener = {
+    .configure = xdg_surface_configure_handler,
+};
 
-const struct wl_registry_listener registry_listener = {.global        = registry_global_handler,
-                                                       .global_remove = registry_global_remove_handler};
+static const struct wl_registry_listener registry_listener = {
+    .global        = registry_global_handler,
+    .global_remove = registry_global_remove_handler,
+};
 
-void xdg_wm_base_handler(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
+static void xdg_wm_base_handler(void *data, struct xdg_wm_base *xdg_wm_base, uint32_t serial) {
     (void)data;
     xdg_wm_base_pong(xdg_wm_base, serial);
     // printf("ping-pong\n");
 }
 
-const struct xdg_wm_base_listener xdg_wm_base_listener = {.ping = xdg_wm_base_handler};
+static const struct xdg_wm_base_listener xdg_wm_base_listener = {
+    .ping = xdg_wm_base_handler,
+};
 
-struct wl_surface *cursor_surface;
-struct wl_cursor_image *cursor_image;
-
-void pointer_enter_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface,
-                           wl_fixed_t x, wl_fixed_t y) {
-    (void)data;
+static void pointer_enter_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface,
+                                  wl_fixed_t x, wl_fixed_t y) {
     (void)surface;
-    (void)x;
-    (void)y;
-    if (wp_cursor_shape_manager_v1) {
+
+    struct SimpleClient *client = data;
+    client->pointer_pos_x       = wl_fixed_to_double(x);
+    client->pointer_pos_y       = wl_fixed_to_double(y);
+    if (client->wp_cursor_shape_manager_v1) {
         struct wp_cursor_shape_device_v1 *device =
-            wp_cursor_shape_manager_v1_get_pointer(wp_cursor_shape_manager_v1, pointer);
+            wp_cursor_shape_manager_v1_get_pointer(client->wp_cursor_shape_manager_v1, pointer);
         wp_cursor_shape_device_v1_set_shape(device, serial, WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT);
-    } else if (cursor_surface) {
-        wl_pointer_set_cursor(pointer, serial, cursor_surface, cursor_image->hotspot_x, cursor_image->hotspot_y);
+    } else if (client->cursor_surface) {
+        wl_pointer_set_cursor(pointer, serial, client->cursor_surface, client->cursor_image->hotspot_x,
+                              client->cursor_image->hotspot_y);
     }
 }
 
-static float pointer_pos_x = 0.0f;
-static float pointer_pos_y = 0.0f;
-
-void pointer_leave_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface) {
-    (void)data;
+static void pointer_leave_handler(void *data, struct wl_pointer *pointer, uint32_t serial, struct wl_surface *surface) {
     (void)pointer;
     (void)serial;
     (void)surface;
 
-    pointer_pos_x = -1.0f;
-    pointer_pos_y = -1.0f;
+    struct SimpleClient *client = data;
+    client->pointer_pos_x       = -1.0f;
+    client->pointer_pos_y       = -1.0f;
 }
 
-void pointer_motion_handler(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
-    (void)data;
+static void pointer_motion_handler(void *data, struct wl_pointer *pointer, uint32_t time, wl_fixed_t x, wl_fixed_t y) {
     (void)pointer;
     (void)time;
-    (void)x;
-    (void)y;
 
-    pointer_pos_x = wl_fixed_to_double(x);
-    pointer_pos_y = wl_fixed_to_double(y);
+    struct SimpleClient *client = data;
+    client->pointer_pos_x       = wl_fixed_to_double(x);
+    client->pointer_pos_y       = wl_fixed_to_double(y);
 }
 
 #ifndef BTN_LEFT
@@ -152,41 +169,41 @@ struct rect_t {
     float height;
 };
 
-struct rect_t close_button_area = {width - 20, 0.0f, 20, 20};
-struct rect_t title_bar_area    = {0.0f, 0.0f, width, 20};
+static const struct rect_t close_button_area = {width - 20, 0.0f, 20, 20};
+static const struct rect_t title_bar_area    = {0.0f, 0.0f, width, 20};
 
 static int in_rect(const struct rect_t *rect, float x, float y) {
     return (rect->x <= x && x < rect->x + rect->width && rect->y <= y && y < rect->y + rect->height);
 }
 
-struct xdg_toplevel *xdg_toplevel;
-
-void pointer_button_handler(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time, uint32_t button,
-                            uint32_t state) {
-    (void)data;
+static void pointer_button_handler(void *data, struct wl_pointer *pointer, uint32_t serial, uint32_t time,
+                                   uint32_t button, uint32_t state) {
     (void)pointer;
     (void)serial;
     (void)time;
-    (void)button;
-    (void)state;
+
+    struct SimpleClient *client = data;
+    float pointer_pos_x         = client->pointer_pos_x;
+    float pointer_pos_y         = client->pointer_pos_y;
 
     if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
         // printf("Left button pressed\n");
-        if (!use_server_side_decoration) {
+        if (!client->use_server_side_decoration) {
             if (in_rect(&close_button_area, pointer_pos_x, pointer_pos_y)) {
                 // printf("click x\n");
-                exit(1);
+                client->should_close = 1;
                 return;
             } else if (in_rect(&title_bar_area, pointer_pos_x, pointer_pos_y)) {
                 // printf("move window\n");
-                xdg_toplevel_move(xdg_toplevel, seat, serial);
+                xdg_toplevel_move(client->xdg_toplevel, client->seat, serial);
                 return;
             }
         }
     }
 }
 
-void pointer_axis_handler(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis, wl_fixed_t value) {
+static void pointer_axis_handler(void *data, struct wl_pointer *pointer, uint32_t time, uint32_t axis,
+                                 wl_fixed_t value) {
     (void)data;
     (void)pointer;
     (void)time;
@@ -194,7 +211,7 @@ void pointer_axis_handler(void *data, struct wl_pointer *pointer, uint32_t time,
     (void)value;
 }
 
-const struct wl_pointer_listener pointer_listener = {
+static const struct wl_pointer_listener pointer_listener = {
     .enter  = pointer_enter_handler,
     .leave  = pointer_leave_handler,
     .motion = pointer_motion_handler,
@@ -226,18 +243,17 @@ static void draw_rect(unsigned char *data, int width, int height, int stride, co
 
 static void draw_decoration(unsigned char *data, int width, int height, int stride) {
     // gray title bar and red close button
-    draw_rect(data, width, height, stride, &title_bar_area,
-              &(struct pixel_t){.a = 255, .r = 120, .g = 120, .b = 120}); 
-    draw_rect(data, width, height, stride, &close_button_area,
-              &(struct pixel_t){.a = 255, .r = 255, .g = 0, .b = 0});
+    draw_rect(data, width, height, stride, &title_bar_area, &(struct pixel_t){.a = 255, .r = 120, .g = 120, .b = 120});
+    draw_rect(data, width, height, stride, &close_button_area, &(struct pixel_t){.a = 255, .r = 255, .g = 0, .b = 0});
     // draw a white cross on the close button
-    int w = (int)close_button_area.width;
-    int pad = 2;
+    int w     = (int)close_button_area.width;
+    int pad   = 2;
     int x_top = w - pad;
     int y_top = x_top;
     for (int y = 0; y < close_button_area.height; y++) {
         for (int x = 0; x < close_button_area.width; x++) {
-            struct pixel_t *px = (struct pixel_t *)(data + (y + (int)close_button_area.y) * stride + (x + (int)close_button_area.x) * 4);
+            struct pixel_t *px =
+                (struct pixel_t *)(data + (y + (int)close_button_area.y) * stride + (x + (int)close_button_area.x) * 4);
             if (pad < x && x < x_top && pad < y && y < y_top && (x == y || x + y == w)) {
                 // white
                 px->a = 255;
@@ -249,9 +265,11 @@ static void draw_decoration(unsigned char *data, int width, int height, int stri
     }
 }
 
-static void draw(unsigned char *data, int width, int height, int stride) {
+static void draw(struct SimpleClient *client, int width, int height, int stride) {
     int64_t t = clock() / (CLOCKS_PER_SEC / 1000);
     // printf("t=%ld\n", t);
+
+    unsigned char *data = client->shm_data;
 
     // fill the buffer with a red square
     for (int y = 0; y < height; y++) {
@@ -276,82 +294,104 @@ static void draw(unsigned char *data, int width, int height, int stride) {
         }
     }
 
-    if (!use_server_side_decoration) {
+    if (!client->use_server_side_decoration) {
         draw_decoration(data, width, height, stride);
     }
 }
 
-unsigned char *data;
 const int stride = width * 4;
 const int size   = stride * height; // bytes
 
-struct wl_surface *surface;
-struct wl_buffer *buffer;
+static void surface_request_frame(struct SimpleClient *client);
 
-void surface_request_frame(void);
-
-void callback_done_handler(void *data_, struct wl_callback *callback, uint32_t time) {
-    (void)data_;
+static void callback_done_handler(void *data, struct wl_callback *callback, uint32_t time) {
     (void)time;
+    struct SimpleClient *client = data;
     // printf("done!\n");
     if (callback) {
         wl_callback_destroy(callback);
     }
-    surface_request_frame();
-    draw(data, width, height, stride);
-    wl_surface_attach(surface, buffer, 0, 0);
-    wl_surface_damage(surface, 0, 0, width, height);
-    wl_surface_commit(surface);
+    surface_request_frame(client);
+    draw(client, width, height, stride);
+    wl_surface_attach(client->surface, client->buffer, 0, 0);
+    wl_surface_damage(client->surface, 0, 0, width, height);
+    wl_surface_commit(client->surface);
 }
 
-const struct wl_callback_listener callback_listener = {
+static const struct wl_callback_listener callback_listener = {
     .done = callback_done_handler,
 };
 
-void surface_request_frame(void) {
-    struct wl_callback *callback = wl_surface_frame(surface);
-    wl_callback_add_listener(callback, &callback_listener, NULL);
+static void surface_request_frame(struct SimpleClient *client) {
+    struct wl_callback *callback = wl_surface_frame(client->surface);
+    wl_callback_add_listener(callback, &callback_listener, client);
 }
 
-int main(void) {
+static int args_match(int argc, char *argv[], const char *arg) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], arg) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
+    struct SimpleClient *client  = calloc(1, sizeof(struct SimpleClient));
+    if (!client) {
+        fprintf(stderr, "Failed to allocate memory for SimpleClient\n");
+        return 1;
+    }
+    client->use_server_side_decoration = !args_match(argc, argv, "--no-server-side-decoration");
+
     struct wl_display *display   = wl_display_connect(NULL);
     struct wl_registry *registry = wl_display_get_registry(display);
-    wl_registry_add_listener(registry, &registry_listener, NULL);
+    if (!display || !registry) {
+        fprintf(stderr, "Failed to connect to Wayland display or registry\n");
+        return 1;
+    }
+    wl_registry_add_listener(registry, &registry_listener, client);
 
     // wait for the "initial" set of globals to appear
     wl_display_roundtrip(display);
 
     // all our objects should be ready!
-    if (!compositor) {
+    if (!client->compositor) {
         fprintf(stderr, "wl_compositor not available\n");
         return 1;
     }
-    if (!shm) {
+    if (!client->shm) {
         fprintf(stderr, "wl_shm not available\n");
         return 1;
     }
 
-    if (xdg_wm_base) {
+    if (client->xdg_wm_base) {
         wl_display_roundtrip(display);
-        xdg_wm_base_add_listener(xdg_wm_base, &xdg_wm_base_listener, NULL);
+        xdg_wm_base_add_listener(client->xdg_wm_base, &xdg_wm_base_listener, client);
     } else {
         fprintf(stderr, "xdg_wm_base not available\n");
         return 1;
     }
 
-    surface = wl_compositor_create_surface(compositor);
+    if (!client->zxdg_decoration_manager_v1) {
+        fprintf(stderr, "zxdg_decoration_manager_v1 not available, use client-side decoration\n");
+        // fallback to client-side decoration
+        client->use_server_side_decoration = 0;
+    }
+
+    client->surface = wl_compositor_create_surface(client->compositor);
     {
-        struct xdg_surface *xdg_surface = xdg_wm_base_get_xdg_surface(xdg_wm_base, surface);
-        xdg_toplevel                    = xdg_surface_get_toplevel(xdg_surface);
-        xdg_surface_add_listener(xdg_surface, &xdg_surface_listener, NULL);
-        xdg_toplevel_set_title(xdg_toplevel, "Hello Wayland");
-        xdg_toplevel_set_app_id(xdg_toplevel, "com.example.hellowayland");
-        xdg_toplevel_add_listener(xdg_toplevel, &xdg_toplevel_listener, NULL);
+        client->xdg_surface  = xdg_wm_base_get_xdg_surface(client->xdg_wm_base, client->surface);
+        client->xdg_toplevel = xdg_surface_get_toplevel(client->xdg_surface);
+        xdg_surface_add_listener(client->xdg_surface, &xdg_surface_listener, client);
+        xdg_toplevel_set_title(client->xdg_toplevel, "Hello Wayland");
+        xdg_toplevel_set_app_id(client->xdg_toplevel, "com.example.hellowayland");
+        xdg_toplevel_add_listener(client->xdg_toplevel, &xdg_toplevel_listener, client);
         // signal that the surface is ready to be configured
-        wl_surface_commit(surface);
-        if (use_server_side_decoration && zxdg_decoration_manager_v1) {
-            struct zxdg_toplevel_decoration_v1 *decoration =
-                zxdg_decoration_manager_v1_get_toplevel_decoration(zxdg_decoration_manager_v1, xdg_toplevel);
+        wl_surface_commit(client->surface);
+        if (client->use_server_side_decoration && client->zxdg_decoration_manager_v1) {
+            struct zxdg_toplevel_decoration_v1 *decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+                client->zxdg_decoration_manager_v1, client->xdg_toplevel);
             zxdg_toplevel_decoration_v1_set_mode(decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
         }
     }
@@ -380,40 +420,87 @@ int main(void) {
     }
 
     // map it to the memory
-    data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (data == MAP_FAILED) {
+    client->shm_data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (client->shm_data == MAP_FAILED) {
         perror("mmap failed");
         return 1;
     }
 
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, size);
+    client->shm_pool = wl_shm_create_pool(client->shm, fd, size);
 
     // allocate the buffer in that pool
-    buffer = wl_shm_pool_create_buffer(pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
+    client->buffer = wl_shm_pool_create_buffer(client->shm_pool, 0, width, height, stride, WL_SHM_FORMAT_ARGB8888);
 
     wl_display_roundtrip(display);
 
-    surface_request_frame();
-    callback_done_handler(NULL, NULL, 0);
+    surface_request_frame(client);
+    callback_done_handler(client, NULL, 0);
 
-    pointer = wl_seat_get_pointer(seat);
+    struct wl_pointer *pointer = wl_seat_get_pointer(client->seat);
     if (pointer) {
-        wl_pointer_add_listener(pointer, &pointer_listener, NULL);
+        wl_pointer_add_listener(pointer, &pointer_listener, client);
 
-        if (!wp_cursor_shape_manager_v1) {
+        if (!client->wp_cursor_shape_manager_v1) {
             // Fallback to using a cursor theme
-            struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(NULL, 24, shm);
+            struct wl_cursor_theme *cursor_theme = wl_cursor_theme_load(NULL, 24, client->shm);
             struct wl_cursor *cursor             = wl_cursor_theme_get_cursor(cursor_theme, "left_ptr");
-            cursor_image                         = cursor->images[0];
-            struct wl_buffer *cursor_buffer      = wl_cursor_image_get_buffer(cursor_image);
+            client->cursor_image                 = cursor->images[0];
+            struct wl_buffer *cursor_buffer      = wl_cursor_image_get_buffer(client->cursor_image);
 
-            cursor_surface = wl_compositor_create_surface(compositor);
-            wl_surface_attach(cursor_surface, cursor_buffer, 0, 0);
-            wl_surface_commit(cursor_surface);
+            client->cursor_surface = wl_compositor_create_surface(client->compositor);
+            wl_surface_attach(client->cursor_surface, cursor_buffer, 0, 0);
+            wl_surface_commit(client->cursor_surface);
         }
     }
 
     while (1) {
         wl_display_dispatch(display);
+        if (client->should_close) {
+            break;
+        }
     }
+    if (client->cursor_surface) {
+        wl_surface_destroy(client->cursor_surface);
+    }
+    if (client->shm_data) {
+        munmap(client->shm_data, size);
+    }
+    if (client->buffer) {
+        wl_buffer_destroy(client->buffer);
+    }
+    if (client->shm_pool) {
+        wl_shm_pool_destroy(client->shm_pool);
+    }
+    if (client->surface) {
+        wl_surface_destroy(client->surface);
+    }
+    if (client->xdg_surface) {
+        xdg_surface_destroy(client->xdg_surface);
+    }
+    if (client->xdg_toplevel) {
+        xdg_toplevel_destroy(client->xdg_toplevel);
+    }
+    if (client->xdg_wm_base) {
+        xdg_wm_base_destroy(client->xdg_wm_base);
+    }
+    if (client->wp_cursor_shape_manager_v1) {
+        wp_cursor_shape_manager_v1_destroy(client->wp_cursor_shape_manager_v1);
+    }
+    if (client->zxdg_decoration_manager_v1) {
+        zxdg_decoration_manager_v1_destroy(client->zxdg_decoration_manager_v1);
+    }
+    if (client->shm) {
+        wl_shm_destroy(client->shm);
+    }
+    if (client->compositor) {
+        wl_compositor_destroy(client->compositor);
+    }
+    if (client->seat) {
+        wl_seat_destroy(client->seat);
+    }
+    if (client) {
+        free(client);
+    }
+    wl_display_disconnect(display);
+    return 0;
 }
