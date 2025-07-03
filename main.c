@@ -391,11 +391,17 @@ int main(int argc, char *argv[]) {
     client->use_server_side_decoration = !args_match(argc, argv, "--no-server-side-decoration");
 
     struct wl_display *display   = wl_display_connect(NULL);
-    struct wl_registry *registry = wl_display_get_registry(display);
-    if (!display || !registry) {
-        fprintf(stderr, "Failed to connect to Wayland display or registry\n");
+    if (!display) {
+        fprintf(stderr, "Failed to connect to Wayland display\n");
         return 1;
     }
+
+    struct wl_registry *registry = wl_display_get_registry(display);
+    if (!registry) {
+        fprintf(stderr, "Failed to get registry\n");
+        return 1;
+    }
+
     wl_registry_add_listener(registry, &registry_listener, client);
 
     // wait for the "initial" set of globals to appear
