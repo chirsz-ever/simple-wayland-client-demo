@@ -159,6 +159,10 @@ static void pointer_motion_handler(void *data, struct wl_pointer *pointer, uint3
 #define BTN_LEFT 0x110
 #endif
 
+#ifndef BTN_0
+#define BTN_0 0x100
+#endif
+
 const int width  = 400;
 const int height = 400;
 
@@ -187,7 +191,9 @@ static void pointer_button_handler(void *data, struct wl_pointer *pointer, uint3
     float pointer_pos_x         = client->pointer_pos_x;
     float pointer_pos_y         = client->pointer_pos_y;
 
-    if (button == BTN_LEFT && state == WL_POINTER_BUTTON_STATE_PRESSED) {
+    // printf("pointer_button_handler: button=0x%x, state=%d\n", (int)button, (int)state);
+
+    if ((button == BTN_LEFT || button == BTN_0) && state == WL_POINTER_BUTTON_STATE_PRESSED) {
         // printf("Left button pressed\n");
         if (!client->use_server_side_decoration) {
             if (in_rect(&minimal_button_area, pointer_pos_x, pointer_pos_y)) {
